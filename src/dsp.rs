@@ -2,7 +2,7 @@ use micromath::F32Ext;
 use core::f32::consts::PI;
 
 
-use cmsis_dsp_sys_pregenerated::{arm_fir_f32, arm_fir_instance_f32};
+use cmsis_dsp_sys_pregenerated::{arm_fir_f32, arm_fir_instance_f32, arm_fir_init_f32};
 
 //the hardware requires a state buffer sized: BLOCK_SIZE + NUM_TAPS - 1
 //we process 1024 floats per loop. filter is <100taps
@@ -176,39 +176,40 @@ impl sampler {
     }
 }
 
+
+//cmsis dsp reduces my loop processing time from like 1400us to 1100us
+//granted, this is an old version, but im doubting that matters, i dont know if i should keep this
+
+//update: i found this way to make it faster(we dont gotta clean up the c pointers every time but its a bit more unsafe, gains like 100us more)
+
 pub struct CmsisFir {
     instance: arm_fir_instance_f32,
-    state: [f32; BLOCK_SIZE + MAX_TAPS],
+    state: [f32; 1024 + 64], 
 }
 
 impl CmsisFir {
     pub fn new() -> Self {
-        Self {
-            instance: arm_fir_instance_f32 {
-                numTaps: 0,
-                pState: core::ptr::null_mut(),
-                pCoeffs: core::ptr::null(),
-            },
-            //the memory buffer that remembers audio history between DMA loops(fir filters need that)
-            state: [0.0; BLOCK_SIZE + MAX_TAPS], 
+        let coeffs = FIR_COEFFS;
+        let mut fir = Self {
+            instance: unsafe { core::mem::zeroed() },
+            state: [0.0; 1088],
+        };
+        unsafe {
+            arm_fir_init_f32(
+                &mut fir.instance,
+                coeffs.len() as u16,
+                coeffs.as_ptr(),
+                fir.state.as_mut_ptr(),
+                1024,
+            );
         }
+        fir
     }
 
     pub fn process(&mut self, input: &[f32], output: &mut [f32]) {
-        //this makes the struct safe but mmmmaaybe its slow, idk
-        let coeffs = FIR_COEFFS;
-        self.instance.numTaps = coeffs.len() as u16;
-        self.instance.pCoeffs = coeffs.as_ptr();
-        self.instance.pState = self.state.as_mut_ptr();
-
-        //we call the fir f32 function
         unsafe {
-            arm_fir_f32(
-                &mut self.instance,
-                input.as_ptr(),
-                output.as_mut_ptr(),
-                input.len() as u32,
-            );
+            //no more pointer updates
+            arm_fir_f32(&self.instance, input.as_ptr(), output.as_mut_ptr(), 1024);
         }
     }
 }

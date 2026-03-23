@@ -26,6 +26,7 @@ static mut DMA_RING_BUFFER: [u32; 4096] = [0; 4096];
 static mut DMA_RX_RING_BUFFER: [u32; 4096] = [0; 4096];
 
 
+
 #[embassy_executor::main]
 async fn main(_spawner: Spawner) {
     let mut config = embassy_stm32::Config::default();
@@ -65,7 +66,7 @@ async fn main(_spawner: Spawner) {
     let p = embassy_stm32::init(config);
 
     
-    let toggler = Input::new(p.PC13, Pull::None);
+    let toggler = Input::new(p.PC13, Pull::Down);
 
     let (sub_block_tx, sub_block_rx) = sai::split_subblocks(p.SAI1);
 
@@ -119,19 +120,20 @@ async fn main(_spawner: Spawner) {
     let mut sine_buffer = [0f32; 1024];
     let mut filtered_buffer = [0f32; 1024];
     //let mut fir_filter = dsp::AntiAliasFir::new(dsp::FIR_COEFFS);
-
+    let mut fir_filter = dsp::CmsisFir::new();
     let mut odp = dsp::overdrive_params::default();
     let mut sampler = dsp::sampler::new(AUDIO_CLIP);
     
     info!("Init successful!");
     let mut process_buf = [0u32; 2048];
-    let mut fir_filter = dsp::CmsisFir::new();
+    
     let mut loop_counter = 0;
     sai_rx.start().unwrap();
     sai_tx.write(&process_buf).await.unwrap(); //according to embassy documentation, we need to start write first
+    sai_tx.write(&process_buf).await.unwrap();
     //this loop double buffers even though it doesn't look like it, the peripheral throws an interrupt when its done with half the buffer(i think)
     loop {
-        if toggler.is_low() {
+        if toggler.is_high() {
             odp.pre_gain = 3.0;
         } else {
             odp.pre_gain = 1.0;
@@ -140,9 +142,8 @@ async fn main(_spawner: Spawner) {
         sai_rx.read(&mut process_buf).await.unwrap(); 
         let start = Instant::now();
         dsp::prep_for_processing(&process_buf, &mut filtered_buffer);
-        //fir_filter.process(&mut filtered_buffer, &mut sine_buffer);
-        //dsp::overdrive(&mut sine_buffer, &odp);
         fir_filter.process(&mut filtered_buffer, &mut sine_buffer);
+        dsp::overdrive(&mut sine_buffer, &odp);
         dsp::prep_for_i2s(&mut process_buf, &sine_buffer);
         let elapsed = start.elapsed();
         loop_counter += 1;
