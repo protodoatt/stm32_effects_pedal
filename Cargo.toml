@@ -38,3 +38,5 @@ cortex-m-rt = "0.7.5"
 panic-probe = { version = "1.0.0", features = ["print-defmt"] }
 grounded = "0.2.1"
 micromath = "2.1.0"
+
+cmsis_dsp_sys_pregenerated = { version = "0.1.0", features = ["cortex-m7", "double-precision-fpu"] }

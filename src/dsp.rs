@@ -2,6 +2,14 @@ use micromath::F32Ext;
 use core::f32::consts::PI;
 
 
+use cmsis_dsp_sys_pregenerated::{arm_fir_f32, arm_fir_instance_f32};
+
+//the hardware requires a state buffer sized: BLOCK_SIZE + NUM_TAPS - 1
+//we process 1024 floats per loop. filter is <100taps
+const BLOCK_SIZE: usize = 1024;
+const MAX_TAPS: usize = 100;
+
+
 //sine generator used for testing
 pub fn fill_sine_buffer(buffer: &mut [f32], phase: &mut f32, phase_step: f32) {
     for f_sample in buffer.iter_mut() {
@@ -26,8 +34,8 @@ pub fn prep_for_i2s(out_buffer: &mut [u32], in_buffer: &[f32]) {
 
 pub fn prep_for_processing(in_buffer: &[u32], out_buffer: &mut [f32]) {
     for (in_chunk, f_sample) in in_buffer.chunks(2).zip(out_buffer.iter_mut()) {
-        let val_i16 = (in_chunk[0] >> 16) as i16;
-        *f_sample = (val_i16 as f32) / 32768.0;
+        let signed_word = in_chunk[0] as i32;
+        *f_sample = (signed_word as f32) / 2147483648.0;
     }
 }
 
@@ -68,7 +76,6 @@ pub const FIR_COEFFS: [f32; 35] = [
     0.0060759826,
     0.0032304017   // h(0)
 ];
-
 
 
 //udo zolzer overdive
@@ -166,5 +173,42 @@ impl sampler {
             *sample = (i16_sample as f32) / 32768.0;
             self.cursor +=2;
         };
+    }
+}
+
+pub struct CmsisFir {
+    instance: arm_fir_instance_f32,
+    state: [f32; BLOCK_SIZE + MAX_TAPS],
+}
+
+impl CmsisFir {
+    pub fn new() -> Self {
+        Self {
+            instance: arm_fir_instance_f32 {
+                numTaps: 0,
+                pState: core::ptr::null_mut(),
+                pCoeffs: core::ptr::null(),
+            },
+            //the memory buffer that remembers audio history between DMA loops(fir filters need that)
+            state: [0.0; BLOCK_SIZE + MAX_TAPS], 
+        }
+    }
+
+    pub fn process(&mut self, input: &[f32], output: &mut [f32]) {
+        //this makes the struct safe but mmmmaaybe its slow, idk
+        let coeffs = FIR_COEFFS;
+        self.instance.numTaps = coeffs.len() as u16;
+        self.instance.pCoeffs = coeffs.as_ptr();
+        self.instance.pState = self.state.as_mut_ptr();
+
+        //we call the fir f32 function
+        unsafe {
+            arm_fir_f32(
+                &mut self.instance,
+                input.as_ptr(),
+                output.as_mut_ptr(),
+                input.len() as u32,
+            );
+        }
     }
 }
