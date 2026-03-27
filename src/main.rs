@@ -67,6 +67,7 @@ async fn main(_spawner: Spawner) {
 
     
     let toggler = Input::new(p.PC13, Pull::Down);
+    
 
     let (sub_block_tx, sub_block_rx) = sai::split_subblocks(p.SAI1);
 
@@ -143,7 +144,7 @@ async fn main(_spawner: Spawner) {
         let start = Instant::now();
         dsp::prep_for_processing(&process_buf, &mut filtered_buffer);
         fir_filter.process(&mut filtered_buffer, &mut sine_buffer);
-        dsp::overdrive(&mut sine_buffer, &odp);
+        //dsp::overdrive(&mut sine_buffer, &odp);
         dsp::prep_for_i2s(&mut process_buf, &sine_buffer);
         let elapsed = start.elapsed();
         loop_counter += 1;
