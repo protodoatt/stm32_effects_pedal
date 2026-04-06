@@ -1,0 +1,22 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "type": "probe-rs-debug",
+            "request": "launch",
+            "name": "Flash & Debug Pedal",
+            "cwd": "${workspaceFolder}",
+            "chip": "STM32F767ZITx", 
+            "flashingConfig": {
+                "flashingEnabled": true,
+                "haltAfterReset": true
+            },
+            "coreConfigs": [
+                {
+                    "programBinary": "./target/thumbv7em-none-eabihf/debug/stm32f767_od"
+                }
+            ],
+            "connectUnderReset": true
+        }
+    ]
+}

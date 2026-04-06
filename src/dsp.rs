@@ -39,7 +39,7 @@ pub fn prep_for_processing(in_buffer: &[u32], out_buffer: &mut [f32]) {
     }
 }
 
-pub const FIR_COEFFS: [f32; 35] = [
+pub const OD_AA_FIR_COEFFS: [f32; 35] = [
     0.0032304017,
     0.0060759826,
     0.0014666575, 
@@ -189,7 +189,7 @@ pub struct CmsisFir {
 
 impl CmsisFir {
     pub fn new() -> Self {
-        let coeffs = FIR_COEFFS;
+        let coeffs = OD_AA_FIR_COEFFS;
         let mut fir = Self {
             instance: unsafe { core::mem::zeroed() },
             state: [0.0; 1088],

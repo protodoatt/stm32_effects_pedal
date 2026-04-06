@@ -6,6 +6,7 @@ use embassy_stm32::sai::*;
 use embassy_stm32::sai;
 use embassy_stm32::gpio::{Input, Pull};
 use embassy_stm32::{bind_interrupts, dma, peripherals, time::mhz};
+use embassy_stm32::peripherals::*;
 use embassy_time::Instant;
 use embassy_futures::join::join;
 use defmt::{error, info};
@@ -30,6 +31,10 @@ static mut DMA_RX_RING_BUFFER: [u32; 4096] = [0; 4096];
 #[embassy_executor::main]
 async fn main(_spawner: Spawner) {
     let mut config = embassy_stm32::Config::default();
+    bind_interrupts!(struct Irqs {
+        DMA2_STREAM1 => dma::InterruptHandler<peripherals::DMA2_CH1>;
+        DMA2_STREAM4 => dma::InterruptHandler<peripherals::DMA2_CH4>;
+    });
     
     //8mhz external clock on the debugger
     config.rcc.hse = Some(embassy_stm32::rcc::Hse {
@@ -86,7 +91,7 @@ async fn main(_spawner: Spawner) {
     tx_config.frame_length = 64; //32 bits left + 32 bits right
     tx_config.frame_sync_active_level_length = embassy_stm32::sai::word::U7(32);
 
-    tx_config.master_clock_divider = embassy_stm32::sai::MasterClockDivider::Div4;
+    tx_config.master_clock_divider = embassy_stm32::sai::MasterClockDivider::DIV4;
 
     let ring_buffer = unsafe { &mut *core::ptr::addr_of_mut!(DMA_RING_BUFFER) };
     let mut sai_tx = Sai::new_asynchronous_with_mclk(
@@ -97,6 +102,7 @@ async fn main(_spawner: Spawner) {
         p.PE2,
         p.DMA2_CH1,
         ring_buffer,
+        Irqs,
         tx_config
     );
 
@@ -113,6 +119,7 @@ async fn main(_spawner: Spawner) {
         p.PE3,
         p.DMA2_CH4,
         rx_ring_buffer,
+        Irqs,
         rx_config
     );
 
