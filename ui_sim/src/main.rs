@@ -87,36 +87,22 @@ fn main() {
     let args: Vec<String> = std::env::args().collect();
     if args.get(1).map(String::as_str) == Some("snap") {
         let mut s = UiState::new();
-        s.pots = [0.65, 0.40, 0.30, 0.55, 0.20];
+        s.pots = [0.65, 0.40, 0.0, 0.0, 0.0];
 
-        // Page 1: Bypass OFF
         snapshot(&s, "01_bypass_off.png");
-        // Page 2: Overdrive OFF (bypass still off)
         s.handle(Event::Rotate(1));
         snapshot(&s, "02_overdrive_off.png");
-        // Click → Overdrive ON
         s.handle(Event::ClickPress);
         s.handle(Event::ClickRelease);
         snapshot(&s, "03_overdrive_on.png");
-        // Move to Delay, turn it on
+        s.handle(Event::Rotate(-1));
+        s.handle(Event::ClickPress);
+        s.handle(Event::ClickRelease);
+        snapshot(&s, "04_bypass_on.png");
         s.handle(Event::Rotate(1));
-        s.handle(Event::ClickPress);
-        s.handle(Event::ClickRelease);
-        snapshot(&s, "04_delay_on.png");
-        // Go back to Bypass and turn it ON — locks other effects
-        s.handle(Event::Rotate(-2));
-        s.handle(Event::ClickPress);
-        s.handle(Event::ClickRelease);
-        snapshot(&s, "05_bypass_on.png");
-        // Visit Overdrive — should now show BYP, click should do nothing
+        snapshot(&s, "05_overdrive_locked.png");
         s.handle(Event::Rotate(1));
-        snapshot(&s, "06_overdrive_locked.png");
-        s.handle(Event::ClickPress);
-        s.handle(Event::ClickRelease);
-        snapshot(&s, "07_overdrive_still_locked.png");
-        // Menu page
-        s.handle(Event::Rotate(2));
-        snapshot(&s, "08_menu.png");
+        snapshot(&s, "06_menu.png");
         return;
     }
 

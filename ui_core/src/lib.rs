@@ -20,7 +20,6 @@ const ROW_TOP: i32 = 13;
 const ROW_H: i32 = 10;
 const CHAR_W: i32 = 6;
 
-const BYPASS_INDEX: usize = 0;
 const VOLUME_LABEL: &str = "Volume";
 
 pub struct EffectDef {
@@ -32,8 +31,10 @@ pub struct EffectDef {
 pub const EFFECTS: &[EffectDef] = &[
     EffectDef { name: "Bypass",    params: ["", "", "", ""] },
     EffectDef { name: "Overdrive", params: ["Pre-Gain", "", "", ""] },
-    EffectDef { name: "Delay",     params: ["Time", "Feedback", "Mix", ""] },
 ];
+
+pub const BYPASS_PAGE: usize = 0;
+pub const OVERDRIVE_PAGE: usize = 1;
 
 const MENU_PAGE: usize = EFFECTS.len();
 const TOTAL_PAGES: usize = EFFECTS.len() + 1;
@@ -69,11 +70,26 @@ impl UiState {
 
     ///true iff bypass is enabled AND we're looking at a non-bypass effect page.
     pub fn locked_by_bypass(&self) -> bool {
-        !self.is_menu() && self.page != BYPASS_INDEX && self.enabled[BYPASS_INDEX]
+        !self.is_menu() && self.page != BYPASS_PAGE && self.enabled[BYPASS_PAGE]
     }
 
     pub fn is_current_enabled(&self) -> bool {
         !self.is_menu() && self.enabled[self.page]
+    }
+
+    ///raw enabled flag for a given effect page.
+    pub fn effect_enabled(&self, idx: usize) -> bool {
+        self.enabled[idx]
+    }
+
+    ///true iff the effect is enabled AND not overridden by bypass.
+    ///use this from the audio task to decide whether to apply the effect.
+    pub fn audio_active(&self, idx: usize) -> bool {
+        if idx == BYPASS_PAGE {
+            self.enabled[BYPASS_PAGE]
+        } else {
+            self.enabled[idx] && !self.enabled[BYPASS_PAGE]
+        }
     }
 
     pub fn handle(&mut self, evt: Event) {
