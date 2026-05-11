@@ -39,7 +39,7 @@ pub fn prep_for_processing(in_buffer: &[u32], out_buffer: &mut [f32]) {
     }
 }
 
-pub const OD_AA_FIR_COEFFS: [f32; 35] = [
+pub static OD_AA_FIR_COEFFS: [f32; 35] = [
     0.0032304017,
     0.0060759826,
     0.0014666575, 
@@ -81,14 +81,14 @@ pub const OD_AA_FIR_COEFFS: [f32; 35] = [
 //udo zolzer overdive
 pub struct overdrive_params {
     pub pre_gain: f32,
-    pub threshold: f32,
+    pub post_gain: f32,
 }
 
 impl Default for overdrive_params {
     fn default() -> Self {
         Self {
             pre_gain: 1.0,
-            threshold: 1.0/3.0,
+            post_gain: 1.0,
         }
     }
 }
@@ -99,10 +99,12 @@ pub fn overdrive(buffer: &mut[f32], overdrive_params: &overdrive_params) {
         let absClipIn = clipIn.abs();
         let signClipIn = if clipIn < 0.0 { -1.0 } else { 1.0 };
 
-        if absClipIn < overdrive_params.threshold {
+        let threshold = 1.0 / 3.0;
+
+        if absClipIn < threshold {
             *sample = 2.0 * clipIn;
         }
-        else if (absClipIn >= overdrive_params.threshold) && (absClipIn < 2.0 * overdrive_params.threshold) {
+        else if (absClipIn >= threshold) && (absClipIn < 2.0 * threshold) {
             *sample = signClipIn * (3.0 - (2.0 - 3.0 * absClipIn) * (2.0 - 3.0 * absClipIn)) / 3.0;
         }
         else {
@@ -115,6 +117,8 @@ pub fn overdrive(buffer: &mut[f32], overdrive_params: &overdrive_params) {
         else if *sample < -1.0 {
             *sample = -1.0;
         }
+
+        *sample *= overdrive_params.post_gain;
     }
 }
 
@@ -189,21 +193,22 @@ pub struct CmsisFir {
 
 impl CmsisFir {
     pub fn new() -> Self {
-        let coeffs = OD_AA_FIR_COEFFS;
-        let mut fir = Self {
+        Self {
             instance: unsafe { core::mem::zeroed() },
             state: [0.0; 1088],
-        };
+        }
+    }
+
+    pub fn init(&mut self) {
         unsafe {
             arm_fir_init_f32(
-                &mut fir.instance,
-                coeffs.len() as u16,
-                coeffs.as_ptr(),
-                fir.state.as_mut_ptr(),
+                &mut self.instance,
+                OD_AA_FIR_COEFFS.len() as u16,
+                OD_AA_FIR_COEFFS.as_ptr(),
+                self.state.as_mut_ptr(),
                 1024,
             );
         }
-        fir
     }
 
     pub fn process(&mut self, input: &[f32], output: &mut [f32]) {
