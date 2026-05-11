@@ -1,9 +1,16 @@
+[workspace]
+members = ["ui_core", "ui_sim"]
+# `cargo build` from the root builds only the MCU binary.
+# For the host simulator: `cd ui_sim && cargo run`
+default-members = ["."]
+
 [package]
 name = "stm32f767_od"
 version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+ui_core = { path = "ui_core" }
 embassy-stm32 = { version = "0.6.0", features = ["stm32f767zi", "unstable-pac", "memory-x", "time-driver-tim4", "exti", "chrono", "single-bank"] }
 
 # Embedded HAL utilities
