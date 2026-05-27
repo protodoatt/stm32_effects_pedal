@@ -218,3 +218,185 @@ impl CmsisFir {
         }
     }
 }
+
+pub struct IIRHpf1 {
+    x: [f32; 2],
+    y: [f32; 2],
+    wc_t: f32,
+    fs: f32
+}
+
+impl IIRHpf1 {
+    pub fn new(fs: f32, fc: f32) -> Self {
+        Self {
+            fs,
+            x: [0.0, 0.0],
+            y: [0.0, 0.0],
+            wc_t: 2.0*PI*fc/fs,
+        }
+    }
+
+    pub fn set_cutoff(&mut self,  fc:f32) {
+        self.wc_t = 2.0*PI*fc/self.fs;
+    }
+
+    pub fn process(&mut self, buffer: &mut [f32]) {
+        for sample in buffer.iter_mut() {
+            self.x[1] = self.x[0];
+            self.x[0] = *sample;
+            let y_new = (2.0*(self.x[0]-self.x[1])+(2.0 - self.wc_t)*self.y[0])/(2.0+self.wc_t);
+            self.y[1] = self.y[0];
+            self.y[0] = y_new;
+            *sample = y_new;
+        }
+    }
+}
+
+
+pub struct IIRLpf1 {
+    x: [f32; 3],
+    y: [f32; 3],
+    wc_t: f32,
+    fs: f32,
+    damp: f32
+}
+
+impl IIRLpf1 {
+    pub fn new(fs: f32, fc: f32, damp: f32) -> Self {
+        Self {
+            fs,
+            damp,
+            x: [0.0; 3],
+            y: [0.0; 3],
+            wc_t: 2.0*PI*fc/fs,
+        }
+    }
+
+    pub fn set_cutoff_damp(&mut self,  fc:f32, damp: f32) {
+        self.wc_t = 2.0*PI*fc/self.fs;
+        self.damp = damp;
+    }
+
+    pub fn process(&mut self, buffer: &mut [f32]) {
+        let wc_t2 = self.wc_t * self.wc_t;
+        let inv_denom = 1.0 / (4.0 + 4.0 * self.damp * self.wc_t + wc_t2);
+        let a1 = -2.0 * (wc_t2 - 4.0);                    //coeff on y[n-1]
+        let a2 = -(4.0 - 4.0 * self.damp * self.wc_t + wc_t2);      //coeff on y[n-2]
+        for sample in buffer.iter_mut() {
+            self.x[2] = self.x[1];
+            self.x[1] = self.x[0];
+            self.x[0] = *sample;
+            let y_new = wc_t2 * (self.x[0] + 2.0 * self.x[1] + self.x[2])
+                + a1 * self.y[0]
+                + a2 * self.y[1];
+            let y_new = y_new * inv_denom;
+            self.y[2] = self.y[1];
+            self.y[1] = self.y[0];
+            self.y[0] = y_new;
+
+            *sample = y_new;
+        }
+    }
+}
+
+//noise gate: moving-RMS detector + binary gate + asymmetric IIR smoothing with hold debounce.
+//ported from phil's lab IFX_NoiseGate.
+const NG_RMS_WINDOW: usize = 480; //10 ms at 48 kHz
+
+pub struct MovingRms {
+    buf: [f32; NG_RMS_WINDOW],
+    head: usize,
+    sum: f32,
+}
+
+impl MovingRms {
+    pub fn new() -> Self {
+        Self { buf: [0.0; NG_RMS_WINDOW], head: 0, sum: 0.0 }
+    }
+
+    //returns mean-square (not sqrt'd) so caller can compare against threshold^2 and skip a sqrt.
+    pub fn update(&mut self, x: f32) -> f32 {
+        let sq = x * x;
+        self.sum -= self.buf[self.head];
+        self.sum += sq;
+        self.buf[self.head] = sq;
+        self.head += 1;
+        if self.head >= NG_RMS_WINDOW { self.head = 0; }
+        //fp accumulation can drift slightly negative on long silences; clamp
+        let m = self.sum / NG_RMS_WINDOW as f32;
+        if m < 0.0 { 0.0 } else { m }
+    }
+}
+
+pub struct NoiseGate {
+    mrms: MovingRms,
+    threshold_sq: f32,
+    hold_time_s: f32,
+    sample_time_s: f32,
+    attack_coeff: f32,
+    release_coeff: f32,
+    attack_counter: f32,
+    release_counter: f32,
+    smoothed_gain: f32,
+}
+
+impl NoiseGate {
+    pub fn new(fs: f32, threshold: f32, attack_ms: f32, release_ms: f32, hold_ms: f32) -> Self {
+        let mut ng = Self {
+            mrms: MovingRms::new(),
+            threshold_sq: threshold * threshold,
+            hold_time_s: hold_ms * 0.001,
+            sample_time_s: 1.0 / fs,
+            attack_coeff: 0.0,
+            release_coeff: 0.0,
+            attack_counter: 0.0,
+            release_counter: 0.0,
+            smoothed_gain: 0.0,
+        };
+        ng.set_times(fs, attack_ms, release_ms);
+        ng
+    }
+
+    pub fn set_threshold(&mut self, threshold: f32) {
+        self.threshold_sq = threshold * threshold;
+    }
+
+    pub fn set_hold(&mut self, hold_ms: f32) {
+        self.hold_time_s = hold_ms * 0.001;
+    }
+
+    //magic 2197.22... = -ln(0.0001)*1000, "time to reach 99.99% of target" form
+    pub fn set_times(&mut self, fs: f32, attack_ms: f32, release_ms: f32) {
+        self.attack_coeff  = (-2197.22457734 / (fs * attack_ms)).exp();
+        self.release_coeff = (-2197.22457734 / (fs * release_ms)).exp();
+    }
+
+    pub fn process(&mut self, buf: &mut [f32]) {
+        for sample in buf.iter_mut() {
+            let in_rms_sq = self.mrms.update(*sample);
+            let gain = if in_rms_sq < self.threshold_sq { 0.0 } else { 1.0 };
+
+            if gain <= self.smoothed_gain {
+                //ATTACK (signal dropped, gate engaging toward 0)
+                if self.attack_counter > self.hold_time_s {
+                    self.smoothed_gain = self.attack_coeff * self.smoothed_gain
+                        + (1.0 - self.attack_coeff) * gain;
+                } else {
+                    self.attack_counter += self.sample_time_s;
+                }
+                self.release_counter = 0.0;
+            } else {
+                //RELEASE (signal returned, gate opening toward 1)
+                if self.release_counter > self.hold_time_s {
+                    self.smoothed_gain = self.release_coeff * self.smoothed_gain
+                        + (1.0 - self.release_coeff) * gain;
+                } else {
+                    self.release_counter += self.sample_time_s;
+                }
+                self.attack_counter = 0.0;
+            }
+
+            *sample *= self.smoothed_gain;
+        }
+    }
+}

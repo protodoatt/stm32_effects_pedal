@@ -29,12 +29,16 @@ pub struct EffectDef {
 }
 
 pub const EFFECTS: &[EffectDef] = &[
-    EffectDef { name: "Bypass",    params: ["", "", "", ""] },
-    EffectDef { name: "Overdrive", params: ["Pre-Gain", "", "", ""] },
+    EffectDef { name: "Bypass",     params: ["", "", "", ""] },
+    EffectDef { name: "Noise Gate", params: ["Thresh", "Att ms", "Rel ms", "Hold ms"] },
+    EffectDef { name: "Overdrive",  params: ["Pre-Gain", "HPF Hz", "LPF Hz", "Damp"] },
+    EffectDef { name: "Bluetooth",  params: ["Mix", "", "", ""] },
 ];
 
 pub const BYPASS_PAGE: usize = 0;
-pub const OVERDRIVE_PAGE: usize = 1;
+pub const NOISEGATE_PAGE: usize = 1;
+pub const OVERDRIVE_PAGE: usize = 2;
+pub const BLUETOOTH_PAGE: usize = 3;
 
 const MENU_PAGE: usize = EFFECTS.len();
 const TOTAL_PAGES: usize = EFFECTS.len() + 1;
@@ -49,6 +53,13 @@ pub struct UiState {
     page: usize,
     enabled: [bool; MAX_EFFECTS],
     pub pots: [f32; NUM_POTS],
+    //true for any pot whose physical position doesn't match the stored audio
+    //value (pickup locked), renderer shows a marker so the user knows the
+    //knob is currently inert until they sweep through the stored value.
+    pub locked: [bool; NUM_POTS],
+    //decimal places shown for each pot's value. defaults to 2; tune for params
+    //whose useful range needs more (e.g. noise gate threshold) or fewer digits.
+    pub precision: [u8; NUM_POTS],
 }
 
 impl UiState {
@@ -57,11 +68,17 @@ impl UiState {
             page: 0,
             enabled: [false; MAX_EFFECTS],
             pots: [0.0; NUM_POTS],
+            locked: [false; NUM_POTS],
+            precision: [2; NUM_POTS],
         }
     }
 
     pub fn is_menu(&self) -> bool {
         self.page == MENU_PAGE
+    }
+
+    pub fn current_page(&self) -> usize {
+        self.page
     }
 
     pub fn current_effect(&self) -> Option<&'static EffectDef> {
@@ -190,12 +207,17 @@ impl UiState {
         let text = MonoTextStyle::new(&FONT_6X10, BinaryColor::On);
         let y = ROW_TOP + (row as i32) * ROW_H;
 
+        //leading char is space normally, '*' when the pot is locked by pickup.
+        //same width either way so the row text doesn't shift in/out of lock.
+        let lock_mark = if self.locked[row] { '*' } else { ' ' };
         let mut left: String<16> = String::new();
-        let _ = write!(left, "{} {}", row + 1, label);
+        let _ = write!(left, "{}{} {}", lock_mark, row + 1, label);
         Text::with_baseline(&left, Point::new(0, y), text, Baseline::Top).draw(target)?;
 
-        let mut val: String<8> = String::new();
-        let _ = write!(val, "{:.2}", value);
+        //per-row precision lets each param choose its decimal count (e.g. NG
+        //threshold needs 4 digits to be useful in the 0..0.025 range).
+        let mut val: String<12> = String::new();
+        let _ = write!(val, "{:.*}", self.precision[row] as usize, value);
         let vw = val.len() as i32 * CHAR_W;
         Text::with_baseline(&val, Point::new(SCREEN_W as i32 - vw, y), text, Baseline::Top)
             .draw(target)?;
