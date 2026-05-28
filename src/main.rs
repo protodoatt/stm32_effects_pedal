@@ -24,6 +24,7 @@ use oled_async::{Builder, displays::sh1106::Sh1106_128_64, prelude::*};
 use {defmt_rtt as _, panic_probe as _};
 
 mod dsp;
+mod can_dash;
 
 //dma buffers, we gotta force them into sram1
 #[unsafe(link_section = ".sram1_bss")]
@@ -153,6 +154,18 @@ async fn audio_task(
             }
         }
 
+        //VU envelope for the can dashboard — peak across the chunk, instant
+        //attack, slow release. chunk = 1024 samples = ~21ms, so alpha=0.85
+        //gives a ~300ms decay which reads right on the cluster needles.
+        let mut peak = 0.0_f32;
+        for s in final_buf.iter() {
+            let a = s.abs();
+            if a > peak { peak = a; }
+        }
+        let prev = f32::from_bits(can_dash::VU_LEVEL_BITS.load(Ordering::Relaxed));
+        let env = if peak > prev { peak } else { 0.85 * prev + 0.15 * peak };
+        can_dash::VU_LEVEL_BITS.store(env.to_bits(), Ordering::Relaxed);
+
         dsp::prep_for_i2s(&mut process_buf, final_buf);
 
         let elapsed = start.elapsed();
@@ -226,7 +239,7 @@ impl PotPickup {
 }
 
 #[embassy_executor::main]
-async fn main(_spawner: Spawner) {
+async fn main(spawner: Spawner) {
     let mut config = embassy_stm32::Config::default();
 
     config.rcc.hse = Some(embassy_stm32::rcc::Hse {
@@ -333,9 +346,22 @@ async fn main(_spawner: Spawner) {
     spawner_high.spawn(audio_task(sai_rx, sai_tx).unwrap());
     spawner_high.spawn(bt_task(bt_rx).unwrap());
 
+    //keep OLED DMA + CAN below audio (P6) so they can't preempt the audio
+    //executor. SAI DMA streams (1/4/5) stay at P0, audio needs them to
+    //preempt the task to keep the ring buffers fed.
+    interrupt::DMA2_STREAM6.set_priority(Priority::P7);
+    interrupt::CAN1_TX.set_priority(Priority::P7);
+    interrupt::CAN1_RX0.set_priority(Priority::P7);
+    interrupt::CAN1_RX1.set_priority(Priority::P7);
+    interrupt::CAN1_SCE.set_priority(Priority::P7);
+
+    //CAN dashboard on the low-priority executor — 50Hz tick, no realtime
+    //constraints. PB8/PB9 = nucleo D15/D14, transceiver on the pedal board.
+    spawner.spawn(can_dash::can_task(p.CAN1, p.PB8, p.PB9).unwrap());
+
     let mut adc = Adc::new(p.ADC3);
-    let mut pot_pa3 = p.PA3; //pre-gain pot (drive)
-    let mut pot_pc0 = p.PC0; //volume pot
+    let mut pot_pa3 = p.PC0; //pre-gain pot (drive) — physical pot 2, wired to PC0
+    let mut pot_pc0 = p.PA3; //volume pot — physical pot 1, wired to PA3
     let mut pot_pc3 = p.PC3; //hpf cutoff
     let mut pot_pf3 = p.PF3; //lpf cutoff
     let mut pot_pf5 = p.PF5; //lpf damp
